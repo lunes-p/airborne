@@ -1,132 +1,80 @@
+#import <substrate.h>
+#import <mach-o/dyld.h>
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
+#import <string.h>
 
-//%hook AppDelegate // 或者替换为应用的入口控制器类
-//
-//- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-//
-//    // 弹出注入成功的提示框
-//    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"注入成功"
-//                                                                   message:@"Tweak 已成功注入"
-//                                                            preferredStyle:UIAlertControllerStyleAlert];
-//    
-//    UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil];
-//    [alert addAction:okAction];
-//    
-//    // 获取根视图控制器并显示提示框
-//    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-//    UIViewController *rootViewController = keyWindow.rootViewController;
-//    [rootViewController presentViewController:alert animated:YES completion:nil];
-//    
-//    return %orig(application, launchOptions); // 调用原方法
-//}
-//
-//%end
+// -----------------------------------------------------------------------
+// 設定: Hopperで見たそのままのアドレス（Static Address）
+// -----------------------------------------------------------------------
+// sub_1001a823c (通貨判定)
+#define TARGET_STATIC_ADDR  0x1001a823c
 
-%hook NSURLSession
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-
-    // 模拟返回错误，表示网络不可用 Simulation returns error indicating network is unavailable
-    NSError *error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
-    completionHandler(nil, nil, error);
+// -----------------------------------------------------------------------
+// Helper: 正しいメモリアドレスを計算する関数 (ASLR対応)
+// -----------------------------------------------------------------------
+static uintptr_t get_real_address(uintptr_t static_address) {
+    uint32_t count = _dyld_image_count();
     
-    return nil; // 返回 nil 来阻止请求 Return nil to block the request
-}
-
-%end
-
-%hook NSURLConnection
-
-+ (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
-
-    // 模拟返回错误，表示网络不可用 Simulation returns error indicating network is unavailable
-    if (error) {
-        *error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
+    // 全イメージを走査
+    for (uint32_t i = 0; i < count; i++) {
+        const char *image_name = _dyld_get_image_name(i);
+        
+        // パスに "Asphalt8" が含まれる、かつ ".dylib" ではない（実行ファイル本体）を探す
+        if (strstr(image_name, "Asphalt8") != NULL) {
+            
+            // ASLRスライド量（起動ごとのズレ）を取得
+            intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+            
+            // 計算式: 実アドレス = スライド量 + 静的アドレス
+            uintptr_t real_address = slide + static_address;
+            
+            NSLog(@"[Asphalt8Mod] Found Binary: %s", image_name);
+            NSLog(@"[Asphalt8Mod] ASLR Slide: 0x%lx", slide);
+            NSLog(@"[Asphalt8Mod] Static Addr: 0x%lx -> Real Addr: 0x%lx", static_address, real_address);
+            
+            return real_address;
+        }
     }
     
-    return nil; // 返回 nil 来阻止请求 Return nil to block the request
+    NSLog(@"[Asphalt8Mod] Error: Target binary not found!");
+    return 0;
 }
 
-%end
+// -----------------------------------------------------------------------
+// 1. Money Mode (Currency Swap)
+// -----------------------------------------------------------------------
 
-%hook AFHTTPSessionManager
+// オリジナルの関数ポインタ
+int (*old_GetItemType)(void* arg0);
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLResponse *response, id responseObject, NSError *error))completionHandler {
+// フック関数
+int new_GetItemType(void* arg0) {
+    // オリジナルの値を一旦取得
+    int type = old_GetItemType(arg0);
 
-    NSLog(@"Hooked AFNetworking request: %@", request.URL.absoluteString);
-
-    // 模拟返回错误，表示网络不可用 Simulation returns error indicating network is unavailable
-    NSError *error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
-    completionHandler(nil, nil, error);
+    // 4:Tokens (Hard Currency) -> 0:Credits に偽装
+    if (type == 4) {
+        return 0; 
+    }
     
-    return nil; // 返回 nil 来阻止请求 Return nil to block the request
+    return type;
 }
 
-%end
+// -----------------------------------------------------------------------
+// Main Constructor
+// -----------------------------------------------------------------------
 
-%hook NSURLConnection
+%ctor {
+    NSLog(@"[Asphalt8Mod] === Injection Started ===");
 
-+ (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    // 模拟网络不可用
-    NSLog(@"Hooked NSURLConnection");
-    return nil;
+    // アドレス計算
+    uintptr_t targetAddr = get_real_address(TARGET_STATIC_ADDR);
+    
+    if (targetAddr != 0) {
+        // フック実行
+        MSHookFunction((void*)targetAddr, (void*)new_GetItemType, (void**)&old_GetItemType);
+        NSLog(@"[Asphalt8Mod] Hook Success!");
+    } else {
+        NSLog(@"[Asphalt8Mod] Hook Failed: Address is 0");
+    }
 }
-
-- (void)start {
-    NSLog(@"NSURLConnection start hooked");
-}
-
-%end
-
-%hook CFSocketStream
-
-- (void)open {
-    NSLog(@"Hooked CFSocketStream open");
-}
-
-- (void)close {
-    NSLog(@"Hooked CFSocketStream close");
-}
-
-%end
-
-%hook NSURLProtocol
-
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    NSLog(@"Hooked NSURLProtocol");
-    return NO; // 阻止任何网络请求 Block any network requests
-}
-
-%end
-
-%hook WKWebView
-
-- (void)loadRequest:(NSURLRequest *)request {
-    NSLog(@"WKWebView network request intercepted: %@", request.URL.absoluteString);
-}
-
-%end
-
-%hook GCDAsyncSocket
-
-- (void)connectToHost:(NSString *)host onPort:(uint16_t)port error:(NSError **)errPtr {
-    NSLog(@"GCDAsyncSocket connection blocked to host: %@", host);
-    *errPtr = [NSError errorWithDomain:@"GCDAsyncSocketErrorDomain" code:1 userInfo:nil];
-}
-
-%end
-
-%hook AFURLSessionManager
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLResponse *response, id responseObject, NSError *error))completionHandler {
-    NSLog(@"Blocked AFNetworking request: %@", request.URL.absoluteString);
-    NSError *error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
-    completionHandler(nil, nil, error);
-
-    return nil; // 阻止网络请求 Block network requests
-}
-
-%end
-
-

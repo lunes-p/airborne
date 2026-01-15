@@ -5,6 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = airborne
 
+airborne_FRAMEWORKS = Foundation UIKit
 airborne_FILES = Tweak.xm
 airborne_CFLAGS = -fobjc-arc
 
