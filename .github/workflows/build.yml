@@ -18,7 +18,7 @@ on:
         type: string
       upload_artifact:
         description: "Upload package as artifact"
-        default: false
+        default: true
         required: false
         type: boolean
 
