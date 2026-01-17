@@ -1,110 +1,71 @@
-// ---------------------------------------------------------
-// 1. Imports & Constants (ファイルの先頭に配置)
-// ---------------------------------------------------------
 #import <Foundation/Foundation.h>
 #import <mach/mach.h>
 #import <mach-o/dyld.h>
-#import <dlfcn.h>
 #import <substrate.h>
 
-// Hopperで表示されているアドレスそのまま (削らない)
-#define HOPPER_ADDRESS 0x100afd14c
+// ---------------------------------------------------------
+// Config
+// ---------------------------------------------------------
 
-// バイナリ名 (部分一致検索用)
-#define BINARY_NAME "Asphalt8"
+// ターゲット: sub_10002e0a0 を呼び出す直前の命令
+// Hopper: 0x100afd14c (and x0, x21, #0xffffffff)
+#define TARGET_OFFSET 0xafd14c
 
-// 書き込む命令: MOV X0, #0 (ARM64 Little Endian: 00 00 80 D2 -> 0xD2800000)
+// 書き込む命令: MOV X0, #0 (これで引数が強制的にCreditsになる)
 #define PATCH_INSTRUCTION 0xD2800000
 
+#define BINARY_NAME "Asphalt8"
+
 // ---------------------------------------------------------
-// 2. Helper Functions
+// Main Logic
 // ---------------------------------------------------------
 
-// メモリの書き換え処理 (vm_protectで保護を外して書き込む)
-bool patch_memory(uintptr_t address, uint32_t instruction) {
-    kern_return_t err;
-
-    // 1. 書き込み許可を与える (READ | WRITE | COPY)
-    err = vm_protect(mach_task_self(), (vm_address_t)address, sizeof(uint32_t), 0, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    
-    if (err != KERN_SUCCESS) {
-        NSLog(@"[A8Mod] Error: vm_protect(RW) failed with code %d at 0x%lx", err, address);
-        return false;
-    }
-
-    // 2. 命令を書き込む
-    *(uint32_t *)address = instruction;
-    NSLog(@"[A8Mod] Successfully wrote instruction 0x%X to address 0x%lx", instruction, address);
-
-    // 3. 実行許可に戻す (READ | EXECUTE)
-    err = vm_protect(mach_task_self(), (vm_address_t)address, sizeof(uint32_t), 0, VM_PROT_READ | VM_PROT_EXECUTE);
-    
-    if (err != KERN_SUCCESS) {
-        NSLog(@"[A8Mod] Warning: vm_protect(RX) failed with code %d. App might be unstable.", err);
-    }
-
-    return true;
-}
-
-// パッチ適用のメインロジック
-void apply_patches() {
-    NSLog(@"[A8Mod] --- Starting Patch Process ---");
+void apply_patch() {
+    NSLog(@"[A8Mod] --- Applying Memory Patch ---");
 
     uint32_t count = _dyld_image_count();
     intptr_t slide = 0;
     bool found = false;
 
-    // バイナリを検索
+    // バイナリ検索
     for (uint32_t i = 0; i < count; i++) {
         const char *image_name = _dyld_get_image_name(i);
         if (image_name && strstr(image_name, BINARY_NAME) != NULL) {
             slide = _dyld_get_image_vmaddr_slide(i);
             found = true;
-            NSLog(@"[A8Mod] Found Target Binary: %s", image_name);
-            NSLog(@"[A8Mod] ASLR Slide: 0x%lx", slide);
+            NSLog(@"[A8Mod] Found Binary: %s", image_name);
             break;
         }
     }
 
     if (!found) {
-        NSLog(@"[A8Mod] Error: Binary '%s' not found.", BINARY_NAME);
+        NSLog(@"[A8Mod] Error: Binary not found.");
         return;
     }
 
-    // アドレス計算: Slide + HopperAddress
-    // これで 0x72c4000 + 0x100afd14c = 0x107d8114c のような正しいアドレスになります
-    uintptr_t targetAddr = slide + HOPPER_ADDRESS;
+    // アドレス計算: Slide + HopperOffset
+    // 今回はHopperのベース(0x100000000)を引いた「純粋なオフセット」を使います
+    // 0x100afd14c - 0x100000000 = 0xafd14c
+    uintptr_t targetAddr = slide + TARGET_OFFSET;
+    
+    NSLog(@"[A8Mod] Patch Target Address: 0x%lx", targetAddr);
 
-    NSLog(@"[A8Mod] Hopper Address: 0x%llx", (uint64_t)HOPPER_ADDRESS);
-    NSLog(@"[A8Mod] Calculated Runtime Address: 0x%lx", targetAddr);
+    // 書き込むデータを用意
+    uint32_t instruction = PATCH_INSTRUCTION;
 
-    // デバッグ: 書き換え前の値を確認
-    // アドレス計算が間違っているとここでクラッシュするので、ログで確認できる
-    @try {
-        uint32_t currentVal = *(uint32_t *)targetAddr;
-        NSLog(@"[A8Mod] Current value at target: 0x%X", currentVal);
-    } @catch (NSException *e) {
-        NSLog(@"[A8Mod] Critical Error: Cannot read memory at 0x%lx. Address calculation might still be wrong.", targetAddr);
-        return;
-    }
-
-    // パッチ実行
-    if (patch_memory(targetAddr, PATCH_INSTRUCTION)) {
-        NSLog(@"[A8Mod] --- PATCH APPLIED SUCCESSFULLY ---");
-        NSLog(@"[A8Mod] Check in-game if 'Tokens' are now 'Credits'.");
-    } else {
-        NSLog(@"[A8Mod] --- PATCH FAILED ---");
-    }
+    // 【重要】MSHookMemoryを使う
+    // 自前のvm_protectではなく、Substrate/ElleKitの機能を使って書き換えます。
+    // これによりJailed環境での権限エラーを回避できる可能性が高いです。
+    MSHookMemory((void *)targetAddr, &instruction, sizeof(instruction));
+    
+    NSLog(@"[A8Mod] MSHookMemory called. Check game for 'Credits' instead of 'Tokens'.");
 }
 
-// ---------------------------------------------------------
-// 3. Constructor
-// ---------------------------------------------------------
 %ctor {
-    NSLog(@"[A8Mod] Dylib loaded. Waiting for game to initialize...");
+    NSLog(@"[A8Mod] Dylib loaded.");
     
-    // 起動直後の競合を避けるため3秒待つ
+    // 起動時の競合回避のため少し待つ
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        apply_patches();
+        apply_patch();
     });
 }
