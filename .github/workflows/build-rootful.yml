@@ -80,7 +80,7 @@ jobs:
         id: build_package
         run: |
           cd ${{ github.workspace }}/main
-          sed -i '' "1s#.*#export TARGET = iphone:clang:${{ inputs.sdk_version }}:14.0#g" Makefile # Modify the SDK version
+          sed -i '' "1s#.*#TARGET := iphone:clang:${{ inputs.sdk_version }}:14.0#g" Makefile # Modify the SDK version
           make package
           echo "package=$(ls -t packages | head -n1)" >>$GITHUB_OUTPUT
           echo -e "==> \033[1mSHASUM256: $(shasum -a 256 packages/*.deb | cut -f1 -d' ')\033[0m"
