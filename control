@@ -1,9 +1,9 @@
 Package: com.lunesp.airborne
 Name: airborne
 Version: 0.0.1
-Architecture: iphoneos-arm
+Architecture:  iphoneos-arm
 Description: An awesome MobileSubstrate tweak!
-Depends: firmware (>= 11.0), mobilesubstrate (>= 0.9.5100)
+Depends: firmware (>= 11.0)
 Maintainer: null
 Author: null
 Section: Tweaks
