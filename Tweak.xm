@@ -2,47 +2,44 @@
 #import <mach-o/dyld.h>
 #import <Foundation/Foundation.h>
 
-// ログを見やすくするためのマクロ
 #define MODLog(format, ...) NSLog(@"[Asphalt8Mod] " format, ##__VA_ARGS__)
 #define ASLR_OFFSET(offset) (_dyld_get_image_vmaddr_slide(0) + offset)
 
 // ---------------------------------------------------------
-// Target: sub_100843bb8 (所持金チェックと思われる関数)
+// Target A: sub_100e506d4
+// User Report: "called multiple times on load for getting value as int"
 // ---------------------------------------------------------
-int (*old_sub_100843bb8)(void *thisPointer);
-
-int new_sub_100843bb8(void *thisPointer) {
-    // 1. 関数が呼ばれたことをログ出力
-    // これが出なければ、アドレス間違い or この関数は使われていない
-    MODLog(@"target_function (sub_100843bb8) CALLED!");
-
-    // 2. オリジナルの戻り値（現在の所持金）を取得
-    int originalValue = old_sub_100843bb8(thisPointer);
-
-    // 3. オリジナルの値をログ出力
-    // ここでゲーム画面の表示と一致する数値が出れば、ビンゴ（正解）です
-    MODLog(@"Original Return Value: %d", originalValue);
-
-    // 4. テストとして数値を固定してみる
-    // 成功すれば表示がこの値になるはず
-    return 999999999;
+int (*old_sub_100e506d4)(void *thisPointer);
+int new_sub_100e506d4(void *thisPointer) {
+    int ret = old_sub_100e506d4(thisPointer);
+    
+    // 戻り値が 0 以外、かつ大きすぎない値（ノイズ除去）の場合にログを出す
+    // もし所持金が 5000 くらいなら、このログに出てくるはずです
+    if (ret > 0) {
+        MODLog(@"[ValGetter] sub_100e506d4 returned: %d", ret);
+    }
+    
+    // テスト: 特定の数値（例: 現在の所持金）が返ってきたら、書き換えてみる
+    // ここでは書き換えずにログ確認だけを優先します
+    return ret;
 }
 
 // ---------------------------------------------------------
-// Sanity Check (生存確認用)
+// Target B: sub_10002e0a0 (Switch Case for IDs)
 // ---------------------------------------------------------
-// ゲーム起動時に必ず呼ばれるであろう場所（AppDelegateなど）か、
-// コンストラクタでログを吐き、Dylibのロード自体は成功しているか確認
-%ctor {
-    MODLog(@"========== MOD LOADED ==========");
-    MODLog(@"ASLR Slide: 0x%lx", _dyld_get_image_vmaddr_slide(0));
-    MODLog(@"Target Address: 0x%lx", ASLR_OFFSET(0x100843bb8));
+// これが呼ばれるタイミングがわかれば、近くに所持金処理があるはず
+void (*old_sub_10002e0a0)(int id, void *retStr); // 引数は推測
+void new_sub_10002e0a0(int id, void *retStr) {
+    MODLog(@"[ID_Check] sub_10002e0a0 called with ID: %d", id);
+    old_sub_10002e0a0(id, retStr);
+}
 
-    // フック設定
-    MSHookFunction(
-        (void *)ASLR_OFFSET(0x100843bb8), 
-        (void *)new_sub_100843bb8, 
-        (void **)&old_sub_100843bb8
-    );
-    MODLog(@"Hook installed.");
+%ctor {
+    MODLog(@"========== MOD PHASE 2 LOADED ==========");
+    
+    // Hook Target A
+    MSHookFunction((void *)ASLR_OFFSET(0x100e506d4), (void *)new_sub_100e506d4, (void **)&old_sub_100e506d4);
+    
+    // Hook Target B
+    MSHookFunction((void *)ASLR_OFFSET(0x10002e0a0), (void *)new_sub_10002e0a0, (void **)&old_sub_10002e0a0);
 }
