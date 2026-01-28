@@ -6,40 +6,38 @@
 #define ASLR_OFFSET(offset) (_dyld_get_image_vmaddr_slide(0) + offset)
 
 // ---------------------------------------------------------
-// Target A: sub_100e506d4
-// User Report: "called multiple times on load for getting value as int"
+// Target: sub_100e506d4 (Getter)
 // ---------------------------------------------------------
-int (*old_sub_100e506d4)(void *thisPointer);
-int new_sub_100e506d4(void *thisPointer) {
-    int ret = old_sub_100e506d4(thisPointer);
-    
-    // 戻り値が 0 以外、かつ大きすぎない値（ノイズ除去）の場合にログを出す
-    // もし所持金が 5000 くらいなら、このログに出てくるはずです
-    if (ret > 0) {
-        MODLog(@"[ValGetter] sub_100e506d4 returned: %d", ret);
+// Assembly解析結果: int GetValue(void* this, int defaultValue)
+// 第2引数(x1)まで定義する必要があります。
+
+int (*old_sub_100e506d4)(void *thisPointer, int defaultValue);
+
+int new_sub_100e506d4(void *thisPointer, int defaultValue) {
+    // オリジナルを呼び出す（正しい引数を渡す）
+    int ret = old_sub_100e506d4(thisPointer, defaultValue);
+
+    // ログフィルタリング:
+    // 0や1、-1などのよくある値は無視し、
+    // 「所持金っぽい値（例: 1000以上）」のときだけログに出す
+    if (ret > 1000) {
+        // もし現在所持金が 5000 クレジットなら、ここに "5000" が出るはず
+        MODLog(@"[ValGetter] sub_100e506d4(ptr=%p, def=%d) returned: %d", thisPointer, defaultValue, ret);
+        
+        // テスト: ここで値を書き換えてみることも可能
+        // return 99999999; 
     }
     
-    // テスト: 特定の数値（例: 現在の所持金）が返ってきたら、書き換えてみる
-    // ここでは書き換えずにログ確認だけを優先します
     return ret;
 }
 
-// ---------------------------------------------------------
-// Target B: sub_10002e0a0 (Switch Case for IDs)
-// ---------------------------------------------------------
-// これが呼ばれるタイミングがわかれば、近くに所持金処理があるはず
-void (*old_sub_10002e0a0)(int id, void *retStr); // 引数は推測
-void new_sub_10002e0a0(int id, void *retStr) {
-    MODLog(@"[ID_Check] sub_10002e0a0 called with ID: %d", id);
-    old_sub_10002e0a0(id, retStr);
-}
-
 %ctor {
-    MODLog(@"========== MOD PHASE 2 LOADED ==========");
+    MODLog(@"========== MOD RELOADED (Crash Fix) ==========");
     
-    // Hook Target A
-    MSHookFunction((void *)ASLR_OFFSET(0x100e506d4), (void *)new_sub_100e506d4, (void **)&old_sub_100e506d4);
-    
-    // Hook Target B
-    MSHookFunction((void *)ASLR_OFFSET(0x10002e0a0), (void *)new_sub_10002e0a0, (void **)&old_sub_10002e0a0);
+    // フック適用
+    MSHookFunction(
+        (void *)ASLR_OFFSET(0x100e506d4), 
+        (void *)new_sub_100e506d4, 
+        (void **)&old_sub_100e506d4
+    );
 }
