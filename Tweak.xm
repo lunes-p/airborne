@@ -1,42 +1,81 @@
-#import <Foundation/Foundation.h>
 #import <substrate.h>
-#import <dlfcn.h>
+#import <mach-o/dyld.h>
+#import <Foundation/Foundation.h>
 
-// `sys/ptrace.h`がプライベートSDKにしか含まれないため、ここで直接定義する
-#define PT_DENY_ATTACH 31
+// ASLRスライド取得用マクロ
+#define ASLR_OFFSET(offset) (_dyld_get_image_vmaddr_slide(0) + offset)
 
-// REMOVED: The following lines were causing redefinition errors
-// typedef int pid_t;
-// typedef void* caddr_t;
-// The SDK already knows what pid_t and caddr_t are.
+// ---------------------------------------------------------
+// 1. 通貨無限ハック (Infinite Currencies)
+// ---------------------------------------------------------
+// Target: sub_100843bb8
+// この関数はループして現在の所持金を計算して返しているように見えます。
+// 戻り値を強制的に書き換えます。
 
-// ptraceの引数の型もヘッダに頼らず、基本的な型で定義する
-// --> The types pid_t and caddr_t are now provided by the SDK headers.
-//     We just need to use them.
-
-// 元のptrace関数のポインタを保存する変数
-static int (*original_ptrace)(int _request, pid_t _pid, caddr_t _addr, int _data);
-
-// ptraceを置き換える自作関数
-int replaced_ptrace(int _request, pid_t _pid, caddr_t _addr, int _data) {
-    if (_request == PT_DENY_ATTACH) {
-        NSLog(@"[AntiAntiDebug] ptrace(PT_DENY_ATTACH) called and BLOCKED!");
-        return 0;
-    }
+int (*old_sub_100843bb8)(void *thisPointer);
+int new_sub_100843bb8(void *thisPointer) {
+    // オリジナルの処理を実行（クラッシュ回避のため念のため呼ぶ）
+    // int originalAmount = old_sub_100843bb8(thisPointer);
     
-    return original_ptrace(_request, _pid, _addr, _data);
+    // 常に約10億を返す
+    return 999999999;
 }
 
-// Tweakがロードされたときに実行されるコンストラクタ
+// ---------------------------------------------------------
+// 2. ステータス操作 / ニトロ (Stats / Nitro)
+// ---------------------------------------------------------
+// Target: sub_1000ec564 内で呼ばれている sub_100e3a040
+// この関数は (Object*, StringObject*) を受け取り、数値を返している可能性が高いです。
+// 文字列キーを判定して、特定の能力値だけ書き換えます。
+
+float (*old_sub_100e3a040)(void *thisPointer, void *stringObj);
+float new_sub_100e3a040(void *thisPointer, void *stringObj) {
+    float originalValue = old_sub_100e3a040(thisPointer, stringObj);
+    
+    // stringObjはGameloft独自のStringクラスの可能性がありますが、
+    // NSString* にキャストして中身が見れるか試します。
+    // 見れない場合、単純に値をブーストする実験が必要です。
+    
+    // 安全のため、ここでのNSString変換はクラッシュのリスクがあります。
+    // まずは単純なログ出力か、全値を2倍にするなどのテストが有効です。
+    
+    // 例: 全ての取得値を2倍にする（TopSpeedなども含むためゲームスピードが上がるかも）
+    // return originalValue * 2.0f; 
+    
+    return originalValue;
+}
+
+// ---------------------------------------------------------
+// 3. 車のアンロック (Unlock Cars) - 実験的
+// ---------------------------------------------------------
+// sub_1000ec564 の最後の方で AvailableForPlayer をセットしています。
+// 直接構造体のメモリを書き換えるのはタイミングが難しいので、
+// 一旦保留するか、MSHookMemoryで特定のチェック命令を潰すのが安全です。
+
+// Target: loc_1000ecbe0 (AvailableForPlayerのチェック?)
+// 0x1000ecbe0: cbz x8, loc_1000ecc08
+// これをNOPにすればチェックをスルーできるかもしれませんが、
+// オフセットがズレると危険なので今回は関数フックに集中します。
+
+// ---------------------------------------------------------
+// Constructor
+// ---------------------------------------------------------
 %ctor {
-    NSLog(@"[AntiAntiDebug] Initializing ptrace hook...");
+    NSLog(@"[Asphalt8Mod] Injected!");
+
+    // 通貨フック
+    MSHookFunction(
+        (void *)ASLR_OFFSET(0x100843bb8), 
+        (void *)new_sub_100843bb8, 
+        (void **)&old_sub_100843bb8
+    );
     
-    void* ptrace_ptr = dlsym(RTLD_DEFAULT, "ptrace");
-    
-    if (ptrace_ptr) {
-        MSHookFunction(ptrace_ptr, (void*)&replaced_ptrace, (void**)&original_ptrace);
-        NSLog(@"[AntiAntiDebug] ptrace hook successful!");
-    } else {
-        NSLog(@"[AntiAntiDebug] Failed to find ptrace function.");
-    }
+    // ステータス取得関数のフック（必要ならコメントアウトを外してアドレスを確認してください）
+    /*
+    MSHookFunction(
+        (void *)ASLR_OFFSET(0x100e3a040), 
+        (void *)new_sub_100e3a040, 
+        (void **)&old_sub_100e3a040
+    );
+    */
 }
