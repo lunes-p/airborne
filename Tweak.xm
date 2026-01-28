@@ -5,74 +5,67 @@
 
 #define MODLog(format, ...) NSLog(@"[Asphalt8Mod] " format, ##__VA_ARGS__)
 
-// 正しいスライド値を取得する関数
+// ゲームバイナリのスライド値を取得
 intptr_t get_game_slide() {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
         const char *name = _dyld_get_image_name(i);
-        // バイナリ名に "Asphalt8" が含まれているか確認
         if (name && strstr(name, "Asphalt8")) {
-            MODLog(@"Found Game Binary at Index %d: %s", i, name);
             return _dyld_get_image_vmaddr_slide(i);
         }
     }
-    MODLog(@"Error: Asphalt8 binary not found in dyld images!");
     return 0;
 }
 
 // ---------------------------------------------------------
-// Target A: sub_100e506d4 (Value Getter?)
+// Target A: sub_100e506d4
+// User Report: "called multiple times on load for getting value as int"
 // ---------------------------------------------------------
-// Assembly解析:
-// int getVal(void *this, int defaultVal) {
-//    if (this->unk4 == 3) return this->unk8;
-//    return defaultVal;
-// }
-// 引数が2つ(x0, x1)あるように見えます。
+// Hopper Address: 0x100e506d4
+// Image Base: 0x100000000 (通常)
+// Actual Offset: 0xe506d4
+// ---------------------------------------------------------
+
 int (*old_sub_100e506d4)(void *thisPointer, int defaultVal);
 
 int new_sub_100e506d4(void *thisPointer, int defaultVal) {
-    // 戻り値を取得
+    // まずはオリジナルの値を取得
     int ret = old_sub_100e506d4(thisPointer, defaultVal);
     
-    // 頻繁に呼ばれる可能性が高いので、特定の値（所持金っぽい値）の時だけログを出す
-    // ノイズ除去のため 1000以上の値のみログ出力
-    if (ret > 1000) {
-        MODLog(@"[ValGetter] (Default: %d) Returned: %d", defaultVal, ret);
+    // ログ出力: 所持金らしき値（例: 1000以上）が出たら記録
+    // 頻繁に呼ばれるとログが溢れるので条件をつける
+    if (ret > 1000 && ret < 1000000000) {
+        MODLog(@"[TargetA] Value: %d (Default: %d)", ret, defaultVal);
+        
+        // 【テスト】もしこれが所持金なら、ここで書き換えれば無限になるはず
+        // ログであなたの所持金と一致する値が出たら、次の行のコメントを外してください
+        // return 999999999;
     }
     
     return ret;
 }
 
-// ---------------------------------------------------------
-// Target B: sub_10002e0a0 (Currency ID Switch)
-// ---------------------------------------------------------
-void (*old_sub_10002e0a0)(int id, void *retStr);
-void new_sub_10002e0a0(int id, void *retStr) {
-    // どのIDがチェックされているかログ出し
-    // 0=Credits, 1=Tokens, 2=RealMoney, 3=Mastery, 5=Keys
-    MODLog(@"[ID_Check] Checked ID: %d", id);
-    old_sub_10002e0a0(id, retStr);
-}
-
 %ctor {
-    MODLog(@"========== MOD FIXED (ASLR FIX) LOADED ==========");
+    MODLog(@"========== MOD PHASE 3 LOADED (Target A Only) ==========");
     
     intptr_t slide = get_game_slide();
-    
     if (slide != 0) {
-        // Target A
-        // 0x100e506d4
-        long offsetA = 0x100e506d4;
-        MSHookFunction((void *)(slide + offsetA), (void *)new_sub_100e506d4, (void **)&old_sub_100e506d4);
+        // HopperのアドレスからImageBase(0x100000000)を引いてオフセットを算出するのが定石
+        // アドレス計算: Slide + (HopperAddr - ImageBase)
+        // もしHopperAddrがオフセットそのものなら Slide + HopperAddr
+        // 前回のログを見る限り、Hopperのアドレスは「0x100000000ベース」のようなので:
         
-        // Target B
-        // 0x10002e0a0
-        long offsetB = 0x10002e0a0;
-        MSHookFunction((void *)(slide + offsetB), (void *)new_sub_10002e0a0, (void **)&old_sub_10002e0a0);
+        uint64_t hopperAddr = 0x100e506d4;
+        uint64_t imageBase = 0x100000000;
+        uint64_t offset = hopperAddr - imageBase;
         
-        MODLog(@"Hooks installed at slide: 0x%lx", slide);
+        void *targetAddr = (void *)(slide + offset);
+        
+        MODLog(@"Hooking Target A at: %p (Offset: 0x%llx)", targetAddr, offset);
+        
+        MSHookFunction(targetAddr, (void *)new_sub_100e506d4, (void **)&old_sub_100e506d4);
+        
     } else {
-        MODLog(@"Failed to find game slide, hooks aborted.");
+        MODLog(@"Error: Game binary not found.");
     }
 }
