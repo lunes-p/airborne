@@ -1,9 +1,9 @@
 # Asphalt 8 2.6.0i (July 27, 2016) hacking report
 
-intended for offline use (app didn't even connect to the server)
+intended for offline use (app didn't even connect to the server?)
 
 ## why 2.6.0?
-It's the oldest version I could install on iOS 14.8.1. Requires iOS 12 or later.
+It's the oldest version I could install on iOS 14.8. Requires iOS 12 or later.
 
 ## current progress
 - use AppStore++ or MuffinStore to download v2.6.0, use TrollDecrypt to turn into IPA
@@ -17,7 +17,7 @@ It's the oldest version I could install on iOS 14.8.1. Requires iOS 12 or later.
 - static analysis with Hopper Disassembler: tedious but the best approach
 - writing tweak for 2.6.0 with theos: hard but might be possible, some CT tweaks might not be possible to port, Memory Patching is more stable. patched successfully but wasn't effective
 - dynamic analysis with lldb & debugserver: failed because it checks timing, https://bryce.co/undebuggable/, needs binary patching for bypassing ptrace
-- binary patching: also tedious; have to sign with ldid, pack as IPA, reinstall with TrollStore every time because replacing binary isn't enough
+- binary patching: also tedious; may have to sign with ldid?, pack as IPA, reinstall with TrollStore/LiveContainer every time because replacing binary isn't enough
 
 ## tweak progress
 ### tips
@@ -42,6 +42,12 @@ token to credit tweak (offset: 186552)
 
 `00 30 40 B9 C0 03 5F D6` to `00 00 80 52 C0 03 5F D6`
 
+### sub_1000dddc4
+free decal shopping without consequences
+for all tweaks that call sub_10002d9d0 (or some func), add `NOP (1F 20 03 D5)`
+- `13 3E FD 97` to `1F 20 03 D5` (sub_10002d9d) (offset: 909700)
+- `70 3F FD 97` to `1F 20 03 D5` (sub_10002df5c) (offset: 909724)
+
 ### symbol notes:
 - sub_1000ec564: for loading/initializing car data?
 - sub_10002e0a0: revealed currency ID "treasure map"
@@ -51,6 +57,17 @@ token to credit tweak (offset: 186552)
 - sub_1000e6b60: final check before purchase?
 - sub_101198a44: decides if item is purchasable/unlockable, apparently this is called every frame, and bad modification will wreck the app (offset: 18451012)
 - sub_10002d8c0: somehow it enabled 0%OFF sale for everything (offset: 186560)
+
+"BL sub_10002d9d0":
+- sub_1000d598c 8 leave it as is
+- sub_1000d8330 2
+- sub_1000dddc4 1 (decal)
+- sub_1000e4404 3, (935684, 936608, 936940) x
+- sub_10061edbc 1 (6419080) x
+- sub_10061fa54 1 (6422180) x
+- sub_100850974 2 (! 8719004, 8719544) some important func? (8719044, 8719184, 8719584, 8719724)
+- sub_100850f38 1
+- sub_1008b2340 1
 
 "BL sub_100843bb8" (probably checking money in possession, offset: 8666040):
 - sub_100328880
